@@ -42,6 +42,11 @@
 --         2. 把连接时间放长: connectTimeoutSec 设置为 0.5 或者 1。首次尝试真机调试时这个值可以设置大一点，之后再根据自己的网络状况向下调整。
 --         调试方法可以参考 github 文档
 
+local IGNORE_G = {["LuaPanda"] = true}
+for k in pairs(_G) do
+    IGNORE_G[k] = true
+end
+
 --用户设置项
 local openAttachMode = true;            --是否开启attach模式。attach模式开启后可以在任意时刻启动vscode连接调试。缺点是没有连接调试时也会略降低lua执行效率(会不断进行attach请求)
 local attachInterval = 1;               --attach间隔时间(s)
@@ -1633,7 +1638,16 @@ end
 -----------------------------------------------------------------------------
 
 ------------------------堆栈管理-------------------------
-
+local function ExtractFunctionNameFromLine(src_path, linedefined)
+    local c_line = 1
+    -- EXTRACT NAME OF THE FUNCTION
+    for line in io.lines(src_path) do
+      if c_line == tonumber(linedefined) then
+        return line:match '^%s*(.*%S)'
+      end
+      c_line = c_line + 1
+    end
+end
 
 --getStackTable需要建立stackTable，保存每层的lua函数实例(用来取upvalue)，保存函数展示层级和ly的关系(便于根据前端传来的stackId查局部变量)
 -- @level 要获取的层级
@@ -1652,12 +1666,12 @@ function this.getStackTable( level )
         if info == nil then
             break;
         end
-        if info.source ~= "=[C]" then
+        if info.source ~= "=[C]" and not info.source:match("LuaPanda.lua") then
             local ss = {};
             ss.file = this.getPath(info);
             local oPathFormated = this.formatOpath(info.source) ; --从lua虚拟机获得的原始路径, 它用于帮助定位VScode端原始lua文件的位置(存在重名文件的情况)。
             ss.oPath = this.truncatedPath(oPathFormated, truncatedOPath);
-            ss.name = "文件名"; --这里要做截取
+            ss.name = info.name or ExtractFunctionNameFromLine(oPathFormated, info.linedefined) --"文件名"; --这里要做截取
             ss.line = tostring(info.currentline);
             --使用hookLib时，堆栈有偏移量，这里统一调用栈顶编号2
             local ssindex = functionLevel - 3;
@@ -1926,7 +1940,12 @@ function this.isHitBreakpoint(breakpointPath, opath, curLine)
                         return conditionRet;
                     elseif cur_node["type"] == "1" then
                         -- log point
-                        this.printToVSCode("[LogPoint Output]: " .. cur_node["logMessage"], 2, 2);
+                        local expr = cur_node["logMessage"]:match('{(.-)}')
+                        if expr then
+                            LogExpression(cur_node["logMessage"])
+                        else
+                            this.printToVSCode("[LogPoint Output]: " .. cur_node["logMessage"], 2, 2);
+                        end
                         return false;
                     else
                         -- line breakpoint
@@ -1940,6 +1959,51 @@ function this.isHitBreakpoint(breakpointPath, opath, curLine)
         recordBreakPointPath = '';  --当切换文件时置空，避免提示给用户错误信息
     end
     return false;
+end
+local function Literalize(str) return str:gsub("[%(%)%.%%%+%-%*%?%[%]%^%$]", function(c) return "%" .. c end) end
+
+function LogExpression(msg)
+    local function eachLocals(level, search_above)
+        level = level + 1
+        local i = 1
+        return function()
+          while debug.getinfo(level, '') do
+            local name, value = debug.getlocal(level, i)
+            if name then
+              i = i + 1
+              return level - 1, i - 1, name, value
+            elseif not search_above then
+              return
+            end
+            level, i = level + 1, 1
+          end
+        end
+      end
+
+      local function getVarByName(_, var)
+        for level, index, name, value in eachLocals(4, true) do
+          if name == var then
+            return value
+          end
+        end
+
+        return _G[var]
+      end
+
+      local new_msg = msg
+      local eval_env = {}
+      setmetatable(eval_env, { __index = getVarByName })
+
+      local function eval(expr)
+        local code = load('return ' .. expr, 'eval', 't', eval_env)
+        return code
+    end
+
+    for expr in msg:gmatch('{(.-)}') do        
+        local bol, res = pcall(eval(expr))
+        new_msg = new_msg:gsub("{"..Literalize(expr) .."}", "{" .. tostring(res) .."}", 1)
+    end
+    this.printToVSCode(new_msg, 2, 2)
 end
 
 -- 条件断点处理函数
@@ -2793,23 +2857,25 @@ function this.getGlobalVariable( ... )
     --成本比较高，这里只能遍历_G中的所有变量，并去除系统变量，再返回给客户端
     local varTab = {};
     for k,v in pairs(_G) do
-        local var = {};
-        var.name = tostring(k);
-        var.type = tostring(type(v));
-        xpcall(function() var.value = tostring(v) end , function() var.value =  tostring(type(v)) .." [value can't trans to string]" end );
-        var.variablesReference = "0";
-        if var.type == "table" or var.type == "function" or var.type == "userdata" then
-            var.variablesReference = variableRefIdx;
-            variableRefTab[variableRefIdx] = v;
-            variableRefIdx = variableRefIdx + 1;
-            if var.type == "table" then
-                local memberNum = this.getTableMemberNum(v);
-                var.value = memberNum .." Members ".. ( var.value or '' );
+        if not IGNORE_G[k] and type(v) ~="function" then
+            local var = {};
+            var.name = tostring(k);
+            var.type = tostring(type(v));
+            xpcall(function() var.value = tostring(v) end , function() var.value =  tostring(type(v)) .." [value can't trans to string]" end );
+            var.variablesReference = "0";
+            if var.type == "table" or var.type == "function" or var.type == "userdata" then
+                var.variablesReference = variableRefIdx;
+                variableRefTab[variableRefIdx] = v;
+                variableRefIdx = variableRefIdx + 1;
+                if var.type == "table" then
+                    local memberNum = this.getTableMemberNum(v);
+                    var.value = memberNum .." Members ".. ( var.value or '' );
+                end
+            elseif var.type == "string" then
+                var.value = '"' ..v.. '"';
             end
-        elseif var.type == "string" then
-            var.value = '"' ..v.. '"';
+            table.insert(varTab, var);
         end
-        table.insert(varTab, var);
     end
     return varTab;
 end
@@ -2942,6 +3008,7 @@ end
 
 -- 执行表达式
 function this.processExp(msgTable)
+    local isSet = nil
     local retString;
     local var = {};
     var.isSuccess = "true";
@@ -2955,7 +3022,11 @@ function this.processExp(msgTable)
             end
 
             local expressionWithReturn = "return " .. expression;
-            local f = debugger_loadString(expressionWithReturn) or debugger_loadString(expression);
+            local f = debugger_loadString(expressionWithReturn)
+            if not f then 
+                f = debugger_loadString(expression);
+                isSet = true
+            end
             --判断结果，如果表达式错误会返回nil
             if type(f) == "function" then
                 if _VERSION == "Lua 5.1" then
@@ -2964,9 +3035,9 @@ function this.processExp(msgTable)
                     debug.setupvalue(f, 1, env);
                 end
                 --表达式要有错误处理
-                xpcall(function() retString = f() end , function() retString = "输入错误指令。\n + 请检查指令是否正确\n + 指令仅能在[暂停在断点时]输入, 请不要在程序持续运行时输入"; var.isSuccess = false; end)
+                xpcall(function() retString = f() end , function() retString = "Enter an error instruction.\n + Please check whether the instruction is correct\n + The instruction can only enter, Please do not enter when the program continues to run"; var.isSuccess = false; end)
             else
-                retString = "指令执行错误。\n + 请检查指令是否正确\n + 可以直接输入表达式，执行函数或变量名，并观察执行结果";
+                retString = "The instruction executes an error.\n + Please check whether the instruction is correct\n + You can directly enter the expression, execute function or variable name, and observe the execution results";
                 var.isSuccess = false;
             end
         end
@@ -2974,7 +3045,7 @@ function this.processExp(msgTable)
 
     var.name = "Exp";
     var.type = tostring(type(retString));
-    xpcall(function() var.value = tostring(retString) end , function(e) var.value = tostring(type(retString))  .. " [value can't trans to string] ".. e; var.isSuccess = false; end);
+    xpcall(function() var.value = isSet and "VAR SET" or tostring(retString) end , function(e) var.value = tostring(type(retString))  .. " [value can't trans to string] ".. e; var.isSuccess = false; end);
     var.variablesReference = "0";
     if var.type == "table" or var.type == "function" or var.type == "userdata" then
         variableRefTab[variableRefIdx] = retString;
@@ -3010,9 +3081,9 @@ function this.processWatchedExp(msgTable)
         else
             debug.setupvalue(f, 1, env);
         end
-        xpcall(function() retString = f() end , function() retString = "输入了错误的变量信息"; var.isSuccess = "false"; end)
+        xpcall(function() retString = f() end , function() retString = "Variable doesn't exist"; var.isSuccess = "false"; end)
     else
-        retString = "未能找到变量的值";
+        retString = "Unable to find value for variable";
         var.isSuccess = "false";
     end
 
@@ -3037,6 +3108,44 @@ function this.processWatchedExp(msgTable)
     table.insert(retTab ,var);
     return retTab;
 end
+
+function GotoCrashLine(e)
+    -- GET CRASH ERROR
+    local byLine = "([^\r\n]*)\r?\n?"
+    local trimPath = "[\\/]([^\\/]-:%d+:.+)$"
+    local stack_inner = {}
+    for line in string.gmatch(e .. "\n" .. debug.traceback(), byLine) do
+        local str = string.match(line, trimPath) or line
+        stack_inner[#stack_inner + 1] = str
+    end
+    this.printToVSCode("\n[Error]: " .. stack_inner[1], 2, 2);
+    this.printToVSCode("[Stack traceback]:\n\t" .. table.concat(stack_inner, "\n\t", 3) .. "\n\n", 2, 2);
+
+    -- GET FUNCTION STACK LEVEL
+    local functionLevel, callerInfo = 1, nil
+    local selfInfo = debug.getinfo(functionLevel, 'SlLnf')
+    repeat
+        functionLevel = functionLevel + 1
+        callerInfo = debug.getinfo(functionLevel, 'SlLnf')
+    until callerInfo.source ~= selfInfo.source and callerInfo.what ~= '=[C]'
+
+    -- GET ALL VARIABLES
+    this.changeHookState(hookState.MID_HOOK)
+    -- CHANGE RUN STATE
+    this.changeRunState(runState.STOP_ON_ENTRY)
+    local info = callerInfo
+    info.event = "line"
+    -- STOP SCRIPT
+    this.real_hook_process(info);
+end
+
+-- REAPER
+local real_defer = reaper.defer
+this.defer = function (callback)
+  return real_defer(function() xpcall(callback, GotoCrashLine) end)
+end
+reaper.defer = this.defer
+-- REAPER
 
 
 function tools.getFileSource()
