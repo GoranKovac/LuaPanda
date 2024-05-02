@@ -2848,6 +2848,7 @@ function this.getVariableRef( refStr )
             end
         end
     end
+    table.sort(varTab, function(a,b) return a.name > b.name end)
     return varTab;
 end
 
@@ -2877,6 +2878,7 @@ function this.getGlobalVariable( ... )
             table.insert(varTab, var);
         end
     end
+    table.sort(varTab, function(a,b) return a.name > b.name end)
     return varTab;
 end
 
