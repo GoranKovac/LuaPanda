@@ -1638,7 +1638,7 @@ end
 -----------------------------------------------------------------------------
 
 ------------------------堆栈管理-------------------------
-local function ExtractFunctionNameFromLine(src_path, linedefined)
+function this.ExtractFunctionNameFromLine(src_path, linedefined)
     local c_line = 1
     -- EXTRACT NAME OF THE FUNCTION
     for line in io.lines(src_path) do
@@ -1671,7 +1671,7 @@ function this.getStackTable( level )
             ss.file = this.getPath(info);
             local oPathFormated = this.formatOpath(info.source) ; --从lua虚拟机获得的原始路径, 它用于帮助定位VScode端原始lua文件的位置(存在重名文件的情况)。
             ss.oPath = this.truncatedPath(oPathFormated, truncatedOPath);
-            ss.name = info.name or ExtractFunctionNameFromLine(oPathFormated, info.linedefined) --"文件名"; --这里要做截取
+            ss.name = info.name or this.ExtractFunctionNameFromLine(oPathFormated, info.linedefined) --"文件名"; --这里要做截取
             ss.line = tostring(info.currentline);
             --使用hookLib时，堆栈有偏移量，这里统一调用栈顶编号2
             local ssindex = functionLevel - 3;
@@ -1942,7 +1942,7 @@ function this.isHitBreakpoint(breakpointPath, opath, curLine)
                         -- log point
                         local expr = cur_node["logMessage"]:match('{(.-)}')
                         if expr then
-                            LogExpression(cur_node["logMessage"])
+                            this.LogExpression(cur_node["logMessage"])
                         else
                             this.printToVSCode("[LogPoint Output]: " .. cur_node["logMessage"], 2, 2);
                         end
@@ -1962,7 +1962,7 @@ function this.isHitBreakpoint(breakpointPath, opath, curLine)
 end
 local function Literalize(str) return str:gsub("[%(%)%.%%%+%-%*%?%[%]%^%$]", function(c) return "%" .. c end) end
 
-function LogExpression(msg)
+function this.LogExpression(msg)
     local function eachLocals(level, search_above)
         level = level + 1
         local i = 1
@@ -3111,7 +3111,7 @@ function this.processWatchedExp(msgTable)
     return retTab;
 end
 
-function GotoCrashLine(e)
+function this.GotoCrashLine(e)
     -- GET CRASH ERROR
     local byLine = "([^\r\n]*)\r?\n?"
     local trimPath = "[\\/]([^\\/]-:%d+:.+)$"
@@ -3142,11 +3142,11 @@ function GotoCrashLine(e)
 end
 
 -- REAPER
-local real_defer = reaper.defer
-this.defer = function (callback)
-  return real_defer(function() xpcall(callback, GotoCrashLine) end)
+--local real_defer = reaper.defer
+this.defer = function (caller, callback)
+  return caller(function() xpcall(callback, this.GotoCrashLine) end)
 end
-reaper.defer = this.defer
+--reaper.defer = this.defer
 -- REAPER
 
 
