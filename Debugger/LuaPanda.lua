@@ -3142,11 +3142,11 @@ function this.GotoCrashLine(e)
 end
 
 -- REAPER
---local real_defer = reaper.defer
-this.defer = function (caller, callback)
-  return caller(function() xpcall(callback, this.GotoCrashLine) end)
+local real_defer = reaper.defer
+this.defer = function (callback)
+  return real_defer(function() xpcall(callback, this.GotoCrashLine) end)
 end
---reaper.defer = this.defer
+reaper.defer = this.defer
 -- REAPER
 
 
