@@ -2003,7 +2003,7 @@ function LogExpression(msg)
         local bol, res = pcall(eval(expr))
         new_msg = new_msg:gsub("{"..Literalize(expr) .."}", "{" .. tostring(res) .."}", 1)
     end
-    this.printToVSCode(new_msg, 2, 2)
+    this.printToVSCode("[LogPoint Output]: " .. new_msg, 2, 2)
 end
 
 -- 条件断点处理函数
