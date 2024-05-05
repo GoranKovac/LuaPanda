@@ -42,6 +42,8 @@
 --         2. 把连接时间放长: connectTimeoutSec 设置为 0.5 或者 1。首次尝试真机调试时这个值可以设置大一点，之后再根据自己的网络状况向下调整。
 --         调试方法可以参考 github 文档
 
+
+-- Table from which user globals will be filtered
 local IGNORE_G = {["LuaPanda"] = true}
 for k in pairs(_G) do
     IGNORE_G[k] = true
@@ -1638,6 +1640,9 @@ end
 -----------------------------------------------------------------------------
 
 ------------------------堆栈管理-------------------------
+---Extract stack call names for vscode preview from file
+--@param src_path string
+--@param linedefined string
 function this.ExtractFunctionNameFromLine(src_path, linedefined)
     local c_line = 1
     -- EXTRACT NAME OF THE FUNCTION
@@ -1666,6 +1671,7 @@ function this.getStackTable( level )
         if info == nil then
             break;
         end
+        -- IGNORE STACK CALLS FROM LUAPANDA (WE GENERALLY ARE NOT INTERESTED IN THAT STACK)
         if info.source ~= "=[C]" and not info.source:match("LuaPanda.lua") then
             local ss = {};
             ss.file = this.getPath(info);
@@ -1962,6 +1968,8 @@ function this.isHitBreakpoint(breakpointPath, opath, curLine)
 end
 local function Literalize(str) return str:gsub("[%(%)%.%%%+%-%*%?%[%]%^%$]", function(c) return "%" .. c end) end
 
+---Evaluate expression in Logpoint {x}
+--@param msg string
 function this.LogExpression(msg)
     local function eachLocals(level, search_above)
         level = level + 1
@@ -2858,6 +2866,7 @@ function this.getGlobalVariable( ... )
     --成本比较高，这里只能遍历_G中的所有变量，并去除系统变量，再返回给客户端
     local varTab = {};
     for k,v in pairs(_G) do
+        -- IGNORE NON USER GLOBALS AND FUNCTIONS
         if not IGNORE_G[k] and type(v) ~="function" then
             local var = {};
             var.name = tostring(k);
@@ -3110,7 +3119,8 @@ function this.processWatchedExp(msgTable)
     table.insert(retTab ,var);
     return retTab;
 end
-
+---On error show error line in vscode
+--@param e string
 function this.GotoCrashLine(e)
     -- GET CRASH ERROR
     local byLine = "([^\r\n]*)\r?\n?"
@@ -3141,13 +3151,13 @@ function this.GotoCrashLine(e)
     this.real_hook_process(info);
 end
 
--- REAPER
+---REAPER SPECIFIC
+---Add defer loop for debugger to catch errors
 local real_defer = reaper.defer
 this.defer = function (callback)
   return real_defer(function() xpcall(callback, this.GotoCrashLine) end)
 end
 reaper.defer = this.defer
--- REAPER
 
 
 function tools.getFileSource()
