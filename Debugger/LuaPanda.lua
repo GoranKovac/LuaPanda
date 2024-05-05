@@ -1677,7 +1677,7 @@ function this.getStackTable( level )
             ss.file = this.getPath(info);
             local oPathFormated = this.formatOpath(info.source) ; --从lua虚拟机获得的原始路径, 它用于帮助定位VScode端原始lua文件的位置(存在重名文件的情况)。
             ss.oPath = this.truncatedPath(oPathFormated, truncatedOPath);
-            ss.name = info.name or this.ExtractFunctionNameFromLine(oPathFormated, info.linedefined) --"文件名"; --这里要做截取
+            ss.name = info.name or this.ExtractFunctionNameFromLine(info.source:gsub("@","",1 ), info.linedefined) --"文件名"; --这里要做截取
             ss.line = tostring(info.currentline);
             --使用hookLib时，堆栈有偏移量，这里统一调用栈顶编号2
             local ssindex = functionLevel - 3;
